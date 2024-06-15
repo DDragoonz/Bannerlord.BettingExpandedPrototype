@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Betting Prototype</title>
+
+		<style>
+		.dead{
+			background-color: #ff0303;
+		}
+		table, th, td {
+			border: 1px solid black;
+			border-collapse: collapse;
+			padding: 3px;
+		}
+		tr:hover {
+			background-color: rgb(127, 127, 127 , 0.4);
+		}
+		input[type='number']{
+		    width: 30px;
+		}
+
+		.scoreCorrect{
+			background-color: #8f6a16;
+		} 
+		.scoreCorrectWin{
+			background-color: #ffac45;
+		}
+		.team1{
+			background-color: #ff5d5d;
+		}
+		.team2{
+			background-color: #5d9eff;
+		}
+		.team3{
+			background-color: #5fff5d;
+		}
+		.team4{
+			background-color: #fffa5d;
+		}
+		
+		</style>
+	</head>
+<body onload="Reset()">
+
+	<h1>Tournament Betting</h1>
+
+	<label id="money">Your Money : 10000</label><br>
+	<label id="ticketPrice">Ticket Price : 100 </label><br>
+	<label id="prizePool">Prize Pool : 99000 (after 1% tax)</label><br>
+	<label >Betting Mode </label>
+	<select id="mode" onchange="UpdateBetDistribution()" >
+	  <option value=0>All Score</option>
+	  <option value=1>Highest Score</option>
+	  <option value=2>Highest Score (rounded)</option>
+	  <option value=3>Alive Only</option>
+	  <option value=4>Team Winner</option>
+	  <option value=5>Qualified</option>
+	  <option id="bestOfOption" value=6>Best of log</option>
+	</select>
+	<input id="simulation" type="button" value="Start Simulation" onclick="ToggleSimulation()">
+	<input id="dump" type="button" value="Dump Normalized Bet Weight" onclick="DumpNormalizedBetWeight()">
+
+
+	<hr></hr>
+
+	<table id="betTable">
+
+		<!-- auto generated table content -->
+
+	</table>
+
+	<hr></hr>
+
+	<input id="start" type="button" value="Start Tournament" onclick="StartTournament()">
+	<input id="next" type="button" value="Next Round" onclick="NextRound()">
+	<input id="reset" type="button" value="Reset" onclick="Reset()">
+	
+
+	<p id="tournamentLog"></p>
+
+	<script>
+
+		var debugMode = false;
+
+		class Participant{
+			constructor(id,name){
+				this.id = id;
+				this.name = name;
+				this.score = 0;
+				this.dead = false;
+				this.team = -1;
+			}
+
+			ResetScore(){
+				this.score = 0;
+				this.dead = false;
+			}
+		}
+
+		var bets = [];
+		var maxBet = 100;
+		var totalComputerBets = 500;
+		var money = 10000;
+		var tax = 0.01;
+		var ticketPrice = 100;
+		var team = [];
+		var participants = [];
+		var aliveParticipant = [];
+		var isSimulation = false;
+		var betWeight = [];
+
+
+		function ToggleSimulation() {
+			isSimulation = !isSimulation;
+
+			if (!isSimulation){
+				document.getElementById("simulation").disabled = true;
+				document.getElementById("simulation").value = "Start Simulation";
+			}
+			else{
+				StartSimulation();	
+			}
+			
+		}
+
+		function StartSimulation() {
+			document.getElementById("simulation").disabled = false;
+			document.getElementById("simulation").value = "Stop Simulation";
+			ToggleBetting(false);
+			document.getElementById("money").innerHTML = "Your Money : " + money;
+			document.getElementById("start").disabled = true;
+			document.getElementById("reset").disabled = true;
+			document.getElementById("mode").disabled = true;
+			document.getElementById("next").disabled = true;
+
+			let bettingMode = document.getElementById("mode").value;
+			let matchID = "mode_"+bettingMode+"#"+participants.length+"_"+team.length;
+
+			let maxPoint = GetMaxPoint(participants.length,team.length);
+			for (let i = 0; i < participants.length ;  i++) {
+				
+				for (let j = 0; j < maxPoint ;  j++) {
+					let id = "bets_"+i+"_"+j;
+					document.getElementById(id).innerHTML = GetWeightedBet(matchID,j);
+				}
+			}
+			
+			StartTournament();
+		}
+		
+
+		function Reset(){
+			
+			let participantNum = 16;
+			let teamNum = participantNum >= 4 ? 4 : 2;
+			let maxPoint = GetMaxPoint(participantNum,teamNum); 
+			if (isSimulation){
+				let bettingMode = document.getElementById("mode").value;
+				let nextMode = parseInt(bettingMode) + 1;
+				if ( nextMode > 6) nextMode = 0;
+				document.getElementById("mode").value = nextMode;
+			}
+			GenerateParticipant(participantNum);
+			GenerateTeam(teamNum);
+			DistributeBet(totalComputerBets,participantNum,maxPoint);
+			GenerateTable(participantNum,maxPoint);
+
+			document.getElementById("start").disabled = false;
+			document.getElementById("next").disabled = true;
+			document.getElementById("mode").disabled = false;
+			document.getElementById("bestOfOption").innerHTML = "Best of "+(Math.log2(participants.length));
+			ToggleBetting(true);
+			UpdateInfo();
+
+			document.getElementById("simulation").style.display = debugMode ? `` : `none`;
+			document.getElementById("dump").style.display = debugMode ? `` : `none`;
+		}
+
+		function GenerateParticipant(participantNum){
+			aliveParticipant = [];
+			participants = [];
+			for (let i = 0; i < participantNum; i++) {
+				participants[i] = new Participant(i,"Fighter "+(i+1));
+				aliveParticipant.push(i);
+			}
+		}
+
+		function GenerateTeam(teamNum) {
+			team = [];
+			let teamMemberNum = participants.length / teamNum;
+			for (let i = 0; i < teamNum; i++) {
+				team[i] = [];
+				for (let j = 0; j < teamMemberNum; j++) {
+					team[i].push(participants[i*teamMemberNum+j]);
+					participants[i*teamMemberNum+j].team = i;
+				}
+			}
+		}
+
+
+		function GenerateTable(participantNum,maxPoint) {
+			let result = "<tr> <th> Participants </th>";
+			for (let i = 1; i <= maxPoint; i++) {
+				result += "<th>" + (i*10) +" pts" +"</th>";
+			}
+			result += "<th> Status </th>";
+			result += "</tr>";
+
+			for (let i = 0; i < participantNum; i++) {
+				result += "<tr id=participant_"+i+" class=team"+(participants[i].team+1)+">";
+				result += "<td>" + participants[i].name + "</td>";
+
+				for (let j = 0; j < maxPoint; j++) {
+					let betInputID = "playerBet_"+i+"_"+j;
+					result += "<td id=score_"+i+"_"+j+"> <input type='number'id="+betInputID+" value=0 min=0 oninput=UpdateBet(this)> / <label id=bets_"+i+"_"+j+"> "+bets[i][j]+"</label></td>";
+				}
+
+				result += "<td id=status_"+i+"></td>";
+				result += "<td id=result_"+i+"></td>";
+
+
+				result += "</tr>";
+			}
+
+			document.getElementById("betTable").innerHTML = result;
+			
+		}
+
+		function DistributeBet(totalBet,participantNum,maxPoint) {
+
+			for (let i = 0; i< participantNum; i++ ){
+				bets[i] = [];
+				for (let j = 0; j< maxPoint; j++ ){
+					bets[i][j] = 0;
+				}
+			}
+
+			let bettingMode = document.getElementById("mode").value;
+			let matchID = "mode_"+bettingMode+"#"+participants.length+"_"+team.length;
+
+			for (let i = 0; i< totalBet; i++ ){
+				let participantIndex = RandomRange(0,participantNum);	
+				let scoreIndex = GetRandomBetWeight(matchID,maxPoint);// RandomRange(0,maxPoint);
+				bets[participantIndex][scoreIndex] += 1;
+			}
+
+		}
+
+		function UpdateBetDistribution(){
+			let maxPoint = GetMaxPoint(participants.length,team.length);
+			DistributeBet(totalComputerBets,participants.length,maxPoint);
+			for (let i = 0; i < participants.length ;  i++) {
+				for (let j = 0; j < maxPoint ;  j++) {
+					let id = "bets_"+i+"_"+j;
+					document.getElementById(id).innerHTML = bets[i][j];
+				}
+			}
+		}
+
+		function GetMaxPoint(participantNum,teamNum){
+			let maxPoint = 10;
+			let maxParticipantPerTeam = participantNum / teamNum;
+			let maxPossibleKill = (participantNum - maxParticipantPerTeam);
+			let maxScoreMultiplier = 2; // if kill by headshot
+			return Math.min(maxPoint,maxPossibleKill * maxScoreMultiplier);
+
+		}
+
+		function UpdateBet(inputElement) {
+			let currentBet = 0;
+			let maxPoint = GetMaxPoint(participants.length,team.length);
+			let maxPurchase = Math.min(maxBet, Math.floor(money / ticketPrice));
+
+			for (let i = 0; i < participants.length; i++) {
+				for (let j = 0; j < maxPoint; j++) {
+					let id = "playerBet_"+i+"_"+j;
+					
+					let betValue = parseInt(document.getElementById(id).value);
+					currentBet += betValue;
+					
+				}
+			}
+
+			if (currentBet >= maxPurchase){
+				let excess = currentBet - maxPurchase;
+				inputElement.value -= excess;
+			}
+
+			for (let i = 0; i < participants.length; i++) {
+				for (let j = 0; j < maxPoint; j++) {
+					let totalBetValue = bets[i][j];
+					let id = "playerBet_"+i+"_"+j;
+					let betID = "bets_"+i+"_"+j;
+					let betValue = parseInt(document.getElementById(id).value);
+					totalBetValue += betValue;
+					document.getElementById(betID).innerHTML = totalBetValue;
+				}
+			}
+
+			UpdateInfo();
+
+		}
+
+
+		function StartTournament() {
+			aliveParticipant = [];
+			for (let i = 0; i < participants.length; i++) {
+				participants[i].ResetScore();
+				aliveParticipant.push(i);
+			}
+			ToggleBetting(false);
+			if (!isSimulation) {
+				money -= GetCurrentBet() * ticketPrice;
+			}
+			document.getElementById("money").innerHTML = "Your Money : " + money;
+			document.getElementById("start").disabled = true;
+			document.getElementById("reset").disabled = true;
+			document.getElementById("mode").disabled = true;
+			document.getElementById("next").disabled = true;
+			UpdateScoreCell();
+			document.getElementById("tournamentLog").innerHTML = "Tournament Begin!<br>";
+			setTimeout(SimulateKill, isSimulation ? 1 : 1000);
+
+		}
+
+		function NextRound() {
+
+			if(participants.length == 2){ // end rounds
+				Reset();
+				return;
+			}
+
+			let participantNum = participants.length / 2
+			let teamNum = participantNum >= 4 ? 4 : 2;
+			let maxPoint = GetMaxPoint(participantNum,teamNum); 
+			participants = GetQualifiedParticipant();
+			for (let i = 0; i<participants.length; i++){ // reset id
+				participants[i].id = i;
+			}
+			GenerateTeam(teamNum);
+			DistributeBet(totalComputerBets,participantNum,maxPoint);
+			GenerateTable(participantNum,maxPoint);
+			document.getElementById("start").disabled = false;
+			document.getElementById("next").disabled = true;
+			document.getElementById("mode").disabled = false;
+			document.getElementById("bestOfOption").innerHTML = "Best of "+(Math.log2(participants.length));
+			ToggleBetting(true);
+			UpdateInfo();
+		}
+
+		function SimulateKill(){
+
+			let aliveTeam = [];
+
+			for (let i = aliveParticipant.length - 1; i >= 0; i--) {
+				let index = aliveParticipant[i];
+				let teamIndex = participants[index].team; 
+				if (!aliveTeam.includes(teamIndex)){
+					aliveTeam.push(teamIndex);	
+				}
+				
+			}
+
+			if (aliveTeam.length == 1){
+				document.getElementById("tournamentLog").innerHTML += "Tournament Ended! Team "+(aliveTeam[0] + 1)+" Win!<br>";
+				document.getElementById("reset").disabled = false;
+				document.getElementById("next").disabled = false;
+				document.getElementById("simulation").disabled = false;
+
+				UpdateBetWeight();
+
+				if (isSimulation){
+					NextRound();
+					StartSimulation();
+				}
+				else{
+					ApplyResult();	
+				}
+				return;
+			}
+
+			let victimIndex = RandomRange(0, aliveParticipant.length);
+			let victimOriginalIndex = aliveParticipant[victimIndex];
+			aliveParticipant.splice(victimIndex,1);
+			participants[victimOriginalIndex].dead = true;
+
+			let eligibleKiller = [];
+			let isDeadParticipantTeamEliminated = true;
+			for (let i = aliveParticipant.length - 1; i >= 0; i--) {
+				let participantIndex = aliveParticipant[i];
+				if (participants[participantIndex].team != participants[victimOriginalIndex].team){
+					eligibleKiller.push(participants[participantIndex]);
+				}
+				else{
+					isDeadParticipantTeamEliminated = false;
+				}
+			}
+
+			if (isDeadParticipantTeamEliminated){
+				let deadParticipantTeamIndex = participants[victimOriginalIndex].team;
+				for (let i = aliveTeam.length - 1; i >= 0; i--) {
+					if (aliveTeam[i] != deadParticipantTeamIndex){
+						for (let j = team[aliveTeam[i]].length - 1; j >= 0; j--) {
+							team[aliveTeam[i]][j].score ++;
+						}
+					}
+				}
+			}
+
+			let killerIndex = RandomRange(0, eligibleKiller.length);
+			let score = GetKillScore(eligibleKiller[killerIndex]);
+			eligibleKiller[killerIndex].score += score;
+			let killmethod = score == 20 ? " by headshot " : "";
+
+			UpdateScoreCell();
+
+			document.getElementById("tournamentLog").innerHTML += eligibleKiller[killerIndex].name + " Kill "+ participants[victimOriginalIndex].name + killmethod + " score +"+score+"(total : "+eligibleKiller[killerIndex].score+")<br>";
+			setTimeout(SimulateKill, isSimulation ? 1 : 1000);
+		}
+
+		function UpdateScoreCell(){
+			let maxPoint = GetMaxPoint(participants.length,team.length);
+			let winner = GetWinner();
+			for (let i = 0; i < participants.length; i++) {
+				let participantScore = participants[i].score;
+				let participantScoreRounded = Math.floor(participantScore / 10)*10;
+				document.getElementById("status_"+i).innerHTML = "" + participantScore + " pts " + (participants[i].dead ? "(dead)" : "");
+				let isWinning =  winner.some(e => e.id == participants[i].id);
+				for (let j = 0; j < maxPoint; j++) {
+					let expectedScore = (j+1) * 10;
+					let id = "score_"+i+"_"+j;
+					
+					let className = isWinning ? "scoreCorrectWin" :"scoreCorrect";
+					
+					document.getElementById(id).className = expectedScore == participantScoreRounded ? className : "";
+					
+				}
+			}
+		}
+
+		function ToggleBetting(enable){
+			for (let i = 0; i < participants.length; i++) {
+				
+				for (let j = 0; j < GetMaxPoint(participants.length,team.length); j++) {
+					document.getElementById("playerBet_"+i+"_"+j).disabled = !enable;
+				}
+			}
+		}
+
+		function ApplyResult() {
+			let maxPoint = GetMaxPoint(participants.length,team.length);
+
+			let winner = GetWinner();
+			let winnerCount = winner.length;
+
+
+			let prizePool = GetPrizePool();
+			let participantPrize = Math.floor(prizePool / winnerCount);
+
+			let totalPlayerPrize = 0;
+			for (let j = 0; j < winner.length; j++) {
+				let i = winner[j].id;
+				
+				let participantScore = participants[i].score;
+				let scoreIndex = Math.floor(participantScore / 10) - 1;
+				if (scoreIndex < 0 || scoreIndex >= maxPoint){
+					continue;
+				}
+
+				let inputID = "playerBet_"+i+"_"+scoreIndex;
+				let betID = "bets_"+i+"_"+scoreIndex;
+				let playerBetValue = parseInt(document.getElementById(inputID).value);
+
+				if(playerBetValue > 0){
+					let betTotal = bets[i][scoreIndex] + playerBetValue;
+					let betRatio = playerBetValue / betTotal;
+					let playerPrize = Math.floor(participantPrize * betRatio);
+					money += playerPrize;
+					totalPlayerPrize += playerPrize;
+
+					document.getElementById("result_"+i).innerHTML = "You Win "+playerPrize+" ("+playerBetValue+" / "+betTotal+" * "+prizePool+" / "+winnerCount+")";
+				}
+				
+			}
+			document.getElementById("money").innerHTML = "Your Money : " + money + "(+"+totalPlayerPrize+")";
+		}
+
+		function GetWinner() {
+			let scoreSortedParticipant = participants.slice();
+			scoreSortedParticipant.sort(function(a, b){return b.score - a.score});
+			let winner = [];
+
+			let bettingMode = document.getElementById("mode").value;
+			let maxPoint = GetMaxPoint(participants.length,team.length);
+			let highestScore = scoreSortedParticipant[0].score;
+
+
+			for (let i = 0; i<scoreSortedParticipant.length; i++){
+				let score = scoreSortedParticipant[i].score;
+				let roundedScore = Math.floor(score / 10)*10;
+				let roundedHighScore = Math.floor(highestScore / 10)*10;
+
+				if (bettingMode == 0 && score >= 10 && roundedScore <= (maxPoint * 10)){ // all can win
+					winner.push(scoreSortedParticipant[i]);
+				}
+				else if(bettingMode == 1 && score == highestScore){ // highest score
+					winner.push(scoreSortedParticipant[i]);
+				}
+				else if(bettingMode == 2 && roundedScore == roundedHighScore){ // highest score (rounded)
+					winner.push(scoreSortedParticipant[i]);
+				}
+				else if(bettingMode == 3 && !scoreSortedParticipant[i].dead){
+					winner.push(scoreSortedParticipant[i]);
+				}
+				else if(bettingMode == 4 && score % 10 == (team.length - 1)){
+					winner.push(scoreSortedParticipant[i]);
+				}
+				else if(bettingMode == 5 && i < (scoreSortedParticipant.length / 2)){
+					winner.push(scoreSortedParticipant[i]);
+				}
+				else if(bettingMode == 6 && i < (Math.log2(participants.length))){
+					winner.push(scoreSortedParticipant[i]);
+				}
+			}
+
+			return winner;
+		}
+
+		function GetQualifiedParticipant() {
+			let scoreSortedParticipant = participants.slice();
+			scoreSortedParticipant.sort(function(a, b){return b.score - a.score});
+			scoreSortedParticipant.length = participants.length/2;
+
+			return scoreSortedParticipant;
+		}
+
+		function GetPrizePool() {
+			let currentBet = GetCurrentBet();
+			return ticketPrice * (totalComputerBets + currentBet) * (1-tax);
+		}
+
+		function GetKillScore(participant){
+			return 10*RandomRange(1,3);
+		}
+
+		function GetCurrentBet() {
+			let currentBet = 0;
+			let maxPoint = GetMaxPoint(participants.length,team.length);
+			for (let i = 0; i < participants.length; i++) {
+				for (let j = 0; j < maxPoint; j++) {
+					let id = "playerBet_"+i+"_"+j;
+					let betValue = parseInt(document.getElementById(id).value);
+					currentBet += betValue;
+
+					if (currentBet >= maxBet){
+						return maxBet;
+					}
+					
+				}
+			}
+			return currentBet;
+		}
+
+		function UpdateInfo() {
+			let currentBet = GetCurrentBet();
+			let bettingEstimate = currentBet == 0 ? "" : " (-"+ (currentBet * ticketPrice) +")";
+			document.getElementById("money").innerHTML = "Your Money : " + money + bettingEstimate;
+			document.getElementById("ticketPrice").innerHTML = "Ticket Price : " + ticketPrice+ " | Ticket Left : "+ (maxBet - currentBet);
+			document.getElementById("prizePool").innerHTML = "Prize Pool : " + GetPrizePool()+" (after "+Math.floor(tax * 100)+"% tax, before winner split)";
+		}
+
+		function UpdateBetWeight() {
+
+			if (!debugMode) return;
+
+
+			let participantNum = participants.length;
+			let maxPoint = GetMaxPoint(participantNum,team.length);
+			let bettingMode = document.getElementById("mode").value;
+			let matchID = "mode_"+bettingMode+"#"+participantNum+"_"+team.length;
+			let winner = GetWinner();
+
+			for (var i = 0; i < winner.length; i++) {
+				let pointIndex = Math.floor(winner[i].score / 10) - 1;
+				GetWeightedBet(matchID,pointIndex);
+				betWeight[matchID][pointIndex]++;
+			}
+
+			// for (let i = 0; i < participants.length ;  i++) {
+			// 	for (let j = 0; j < maxPoint ;  j++) {
+			// 		let id = "bets_"+i+"_"+j;
+			// 		document.getElementById(id).innerHTML = GetWeightedBet(matchID,j);
+			// 	}
+			// }
+
+			
+			let betWeightJSON = JSON.stringify(betWeight[matchID]);
+			localStorage.setItem(matchID,betWeightJSON);	
+			
+			
+		}
+
+		function GetWeightedBet(matchID,pointIndex){
+			if (betWeight[matchID] == undefined){
+				if (debugMode){
+					let betWeightJSON = localStorage.getItem(matchID);
+					betWeight[matchID] = betWeightJSON == null ? [] : JSON.parse(betWeightJSON);			
+				}
+				else{
+					betWeight[matchID] = presetBetWeight[matchID];
+					if (betWeight[matchID == undefined]){
+						betWeight[matchID] = [];
+					}
+				}
+				
+			}
+			if (betWeight[matchID][pointIndex] == undefined){
+				betWeight[matchID][pointIndex] = 0;
+			}
+			return betWeight[matchID][pointIndex];
+		}
+
+		function GetRandomBetWeight(matchID, defaultMaxPoint) {
+			if (betWeight[matchID] == undefined){
+				if (debugMode){
+					let betWeightJSON = localStorage.getItem(matchID);
+					betWeight[matchID] = betWeightJSON == null ? [] : JSON.parse(betWeightJSON);			
+				}
+				else{
+					betWeight[matchID] = presetBetWeight[matchID];
+					if (betWeight[matchID == undefined]){
+						betWeight[matchID] = [];
+					}
+				}
+				
+			}
+			if (betWeight[matchID].length == 0){
+				return RandomRange(0,defaultMaxPoint);
+			}
+			// let totalWeight = betWeight[matchID].reduce((partialSum, a) => partialSum + a, 0);
+			// let randomWeight = RandomRange(0,totalWeight);
+			
+			let cumulativeWeights = [];
+			for (let i = 0; i < betWeight[matchID].length; i++) {
+				cumulativeWeights[i] = betWeight[matchID][i] + (cumulativeWeights[i - 1] || 0);
+			}
+
+			let maxCumulativeWeight = cumulativeWeights[cumulativeWeights.length - 1];
+			const randomNumber = maxCumulativeWeight * Math.random();
+
+			
+			for (let i = 0; i < cumulativeWeights.length; i ++ ) {
+				if (cumulativeWeights[i] >= randomNumber) {
+					return i;
+				}    
+			}
+
+			return RandomRange(0,defaultMaxPoint); 
+		}
+
+		function DumpNormalizedBetWeight(){
+			// const items = { ...localStorage };
+
+		    keys = Object.keys(localStorage);
+		    let i = keys.length;
+		    keys.sort();
+
+		    let dumpText = "var presetBetWeight = {<br>";
+		    let dumpText2 = "public static readonly Dictionary&lt;string, List&lt;float&gt;&gt; presetBetWeight = new Dictionary&lt;string, List&lt;float&gt;&gt; <br>{<br>";
+
+		    for (let i = 0; i < keys.length;  i++) {
+		    	dumpText += "&#x09;\"" + keys[i] +"\":[";
+		    	dumpText2 += "{\""+keys[i]+"\", new List&lt;float&gt; {";
+		    	let rawWeight = JSON.parse(localStorage.getItem(keys[i]));
+		    	let totalWeight = rawWeight.reduce((partialSum, a) => partialSum + a, 0);
+		    	for (let j = 0; j < rawWeight.length; j++) {
+		    		let roundedWeight = Math.round(((rawWeight[j] / totalWeight) + Number.EPSILON) * 1000) / 1000;
+		    		dumpText += "" + roundedWeight; 
+		    		dumpText2 += "" + roundedWeight+"f";
+		    		if (j != rawWeight.length - 1){
+		    			dumpText += ",";
+		    			dumpText2 += ",";
+		    		}
+		    	}
+		    	dumpText += "],<br>";
+		    	dumpText2 += "}},<br>";
+
+		    }
+		    dumpText += "};<br><br>";
+		    dumpText2 += "};<br><br>";
+
+
+		    
+		    document.getElementById("tournamentLog").innerHTML = dumpText + dumpText2;
+			
+		}
+
+
+		var presetBetWeight = {
+			"mode_0#2_2":[0.79,0.21],
+			"mode_0#4_2":[0.31,0.462,0.158,0.071],
+			"mode_0#4_4":[0.324,0.357,0.179,0.118,0.023,0],
+			"mode_0#8_2":[0.3,0.345,0.16,0.122,0.047,0.016,0.004,0.006],
+			"mode_0#8_4":[0.264,0.329,0.157,0.126,0.069,0.038,0.013,0.003,0,0],
+			"mode_0#16_4":[0.255,0.328,0.147,0.114,0.073,0.046,0.02,0.012,0.003,0],
+			"mode_1#2_2":[0.481,0.519],
+			"mode_1#4_2":[0.132,0.34,0.33,0.198],
+			"mode_1#4_4":[0.013,0.336,0.352,0.208,0.072,0.019],
+			"mode_1#8_2":[0,0.152,0.275,0.312,0.152,0.065,0.029,0.014],
+			"mode_1#8_4":[0,0.01,0.235,0.332,0.238,0.114,0.037,0.027,0.003,0.003],
+			"mode_1#16_4":[0,0,0.033,0.167,0.282,0.272,0.141,0.079,0.016,0.01],
+			"mode_2#2_2":[0.517,0.483],
+			"mode_2#4_2":[0.161,0.435,0.242,0.161],
+			"mode_2#4_4":[0.06,0.391,0.286,0.189,0.065,0.01],
+			"mode_2#8_2":[0,0.133,0.272,0.348,0.177,0.063,0.006,0],
+			"mode_2#8_4":[0,0.133,0.193,0.316,0.185,0.117,0.039,0.01,0.003,0.003],
+			"mode_2#16_4":[0,0,0.026,0.206,0.243,0.237,0.129,0.09,0.045,0.013,0.005,0.005],
+			"mode_3#2_2":[0.509,0.491],
+			"mode_3#4_2":[0.163,0.365,0.25,0.221],
+			"mode_3#4_4":[0.171,0.255,0.284,0.244,0.033,0.015],
+			"mode_3#8_2":[0.123,0.282,0.258,0.16,0.08,0.067,0.031,0],
+			"mode_3#8_4":[0.055,0.199,0.246,0.213,0.14,0.077,0.037,0.029,0.004,0],
+			"mode_3#16_4":[0.058,0.116,0.168,0.187,0.184,0.11,0.081,0.039,0.035,0.019,0.003],
+			"mode_4#2_2":[0.493,0.507],
+			"mode_4#4_2":[0.24,0.331,0.314,0.116],
+			"mode_4#4_4":[0.152,0.296,0.276,0.188,0.056,0.032],
+			"mode_4#8_2":[0.239,0.293,0.181,0.152,0.08,0.04,0.011,0.004],
+			"mode_4#8_4":[0.178,0.221,0.168,0.212,0.103,0.072,0.028,0.009,0.006,0.003],
+			"mode_4#16_4":[0.19,0.26,0.157,0.148,0.085,0.076,0.035,0.026,0.018,0.004,0.002],
+			"mode_5#2_2":[0.519,0.481],
+			"mode_5#4_2":[0.256,0.417,0.22,0.107],
+			"mode_5#4_4":[0.241,0.367,0.213,0.13,0.039,0.009],
+			"mode_5#8_2":[0.242,0.362,0.193,0.122,0.051,0.02,0.007,0.002],
+			"mode_5#8_4":[0.23,0.374,0.148,0.137,0.059,0.03,0.017,0.004,0.002,0],
+			"mode_5#16_4":[0.195,0.365,0.159,0.12,0.076,0.038,0.029,0.009,0.005,0.002,0.002],
+			"mode_6#2_2":[0.494,0.506],
+			"mode_6#4_2":[0.259,0.435,0.212,0.094],
+			"mode_6#4_4":[0.231,0.431,0.176,0.122,0.024,0.016],
+			"mode_6#8_2":[0.123,0.393,0.198,0.162,0.067,0.036,0.014,0.008],
+			"mode_6#8_4":[0.087,0.382,0.22,0.15,0.101,0.04,0.014,0.003,0.002,0.002],
+			"mode_6#16_4":[0.005,0.183,0.268,0.231,0.13,0.101,0.037,0.032,0.009,0.003,0.001],
+		};
+
+
+		function RandomRange(min, max) {
+		 	return Math.floor(Math.random() * (max - min) ) + min;
+		}
+
+
+
+
+		
+	</script>
+
+	</body>
+</html>
